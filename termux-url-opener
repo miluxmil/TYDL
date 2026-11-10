@@ -241,36 +241,60 @@ update_app() {
 }
 
 
+
 # ==========================================================
 # ENTORNO VIRTUAL PYTHON
 # ==========================================================
 
 setup_python_env() {
 
+    local force="${1:-0}"
+    local marker="$YDL_VENV/.requirements.sha256"
+    local current_hash
+    local installed_hash=""
+
     mkdir -p "$(dirname "$YDL_VENV")"
 
-    # Crear entorno virtual si no existe
+    # Crear entorno virtual si no existe.
     if [[ ! -x "$YDL_VENV/bin/python" ]]; then
-
         msg_info "Creando entorno virtual..."
-
         python -m venv "$YDL_VENV"
-
+        force=1
     fi
 
-    # Comprobar requirements.txt
     if [[ ! -f "$YDL_DIR/requirements.txt" ]]; then
         msg_err "No se encontró requirements.txt"
-        exit 1
+        return 1
     fi
 
-    # Instalar o actualizar dependencias
-    msg_info "Instalando dependencias Python..."
+    # Calcular hash de las dependencias actuales.
+    current_hash=$(sha256sum "$YDL_DIR/requirements.txt" | awk '{print $1}')
 
-    "$YDL_VENV/bin/python" -m pip install \
-        -r "$YDL_DIR/requirements.txt"
+    # Leer hash de la última instalación.
+    if [[ -f "$marker" ]]; then
+        installed_hash=$(cat "$marker")
+    fi
 
-    msg_ok "Dependencias Python listas."
+    # Instalar solamente cuando sea necesario.
+    if [[ "$force" == "1" || "$current_hash" != "$installed_hash" ]]; then
+
+        msg_info "Instalando o actualizando dependencias Python..."
+
+        if ! "$YDL_VENV/bin/python" -m pip install \
+            -r "$YDL_DIR/requirements.txt"; then
+            msg_err "No se pudieron instalar las dependencias."
+            return 1
+        fi
+
+        # Guardar el hash únicamente después de una instalación exitosa.
+        printf '%s\n' "$current_hash" > "${marker}.tmp"
+        mv -f "${marker}.tmp" "$marker"
+
+        msg_ok "Dependencias Python actualizadas."
+
+    else
+        msg_ok "Dependencias Python verificadas; sin cambios."
+    fi
 }
 
 # ==========================================================
@@ -380,12 +404,34 @@ EOF
 }
 
 
+# ============================================================
+# HEADER
+# ============================================================
+
+show_logo() {
+    clear
+
+    cat <<'EOF'
+
+  ████████╗██╗   ██╗██████╗ ██╗
+  ╚══██╔══╝╚██╗ ██╔╝██╔══██╗██║
+     ██║    ╚████╔╝ ██║  ██║██║
+     ██║     ╚██╔╝  ██║  ██║██║
+     ██║      ██║   ██████╔╝██║
+     ╚═╝      ╚═╝   ╚═════╝ ╚═╝
+
+       Termux YouTube Downloader
+
+EOF
+}
+
 # ==========================================================
 # PUNTO DE ENTRADA
 # ==========================================================
 
 main() {
-
+	
+    show_logo
     local URL="${1:-}"
 
     case "$URL" in
