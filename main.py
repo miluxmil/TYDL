@@ -25,6 +25,7 @@ Características:
     • MP3
     • Video
     • Menú persistente
+    • Actualizar
     • Reparar
     • Acerca de
     • Salir
@@ -505,6 +506,7 @@ def extract_info(url):
 
         return None
 
+
 # ============================================================
 # SPINNER
 # ============================================================
@@ -517,6 +519,7 @@ def extract_info_with_spinner(url):
     ):
 
         return extract_info(url)
+
 
 # ============================================================
 # INFORMACIÓN DEL VIDEO
@@ -664,6 +667,7 @@ def get_video_formats(info):
     results.sort(key=lambda item: item["height"])
     return results
 
+
 # ============================================================
 # TABLA DE FORMATOS
 # ============================================================
@@ -745,6 +749,7 @@ def show_formats(info):
     console.print(table)
 
     return formats
+
 
 # ============================================================
 # PROGRESO
@@ -1011,6 +1016,7 @@ def download_video(url, title, platform, height):
         log(f"Video: {error}")
         return False
 
+
 # ============================================================
 # SPOTIFY
 # ============================================================
@@ -1062,6 +1068,7 @@ def handle_spotify(url):
         handle_spotify_playlist(
             data
         )
+
 
 def handle_spotify_track(
     track
@@ -1130,6 +1137,7 @@ def handle_spotify_track(
             "Spotify",
             output_dir=CONFIG["spotify_dir"],
         )
+
 
 def handle_spotify_playlist(
     playlist
@@ -1293,8 +1301,8 @@ def download_session(url):
     # --------------------------------------------------------
 
     info = extract_info_with_spinner(
-    url
-)
+        url
+    )
 
     if not info:
 
@@ -1329,12 +1337,10 @@ def download_session(url):
 
         console.print(
             Panel(
-                "[cyan][R][/cyan] "
-                "🔧 Reparar\n"
-                "[cyan][A][/cyan] "
-                "ℹ Acerca de\n"
-                "[cyan][X][/cyan] "
-                "🚪 Salir",
+                "[cyan][U][/cyan] ⬆ Actualizar\n"
+                "[cyan][R][/cyan] 🔧 Reparar\n"
+                "[cyan][A][/cyan] ℹ Acerca de\n"
+                "[cyan][X][/cyan] 🚪 Salir",
                 title="Funciones",
                 border_style="cyan",
             )
@@ -1351,6 +1357,16 @@ def download_session(url):
         if option == "x":
 
             return
+
+        # ----------------------------------------------------
+        # ACTUALIZAR
+        # ----------------------------------------------------
+
+        if option == "u":
+
+            update_app()
+
+            continue
 
         # ----------------------------------------------------
         # REPARAR
@@ -1442,6 +1458,164 @@ def download_session(url):
             return
 
         pause()
+
+
+# ============================================================
+# ACTUALIZAR APLICACIÓN
+# ============================================================
+
+REPO_OWNER = "miluxmil"
+REPO_NAME = "TYDL"
+REPO_BRANCH = "main"
+
+
+def update_app():
+    """Comprueba si hay una versión nueva en GitHub y actualiza."""
+
+    header()
+    console.print(Panel(
+        "[bold cyan]Actualización de TYDL[/bold cyan]",
+        border_style="cyan",
+    ))
+
+    app_dir = Path(__file__).resolve().parent
+
+    if not (app_dir / ".git").is_dir():
+        console.print(
+            "[yellow]Esta instalación no es un repositorio Git.[/yellow]\n"
+            "[dim]No se puede actualizar automáticamente.[/dim]"
+        )
+        pause()
+        return
+
+    if not command_exists("git"):
+        console.print("[red]Git no está instalado. No se puede actualizar.[/red]")
+        pause()
+        return
+
+    # --------------------------------------------------------
+    # 1. Fetch y comparar
+    # --------------------------------------------------------
+    try:
+        with console.status("[cyan]Consultando GitHub...[/cyan]", spinner="dots"):
+            fetch = subprocess.run(
+                ["git", "-C", str(app_dir), "fetch", "origin", REPO_BRANCH],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+    except Exception as error:
+        console.print(Panel(str(error), title="[red]Error[/red]", border_style="red"))
+        log(f"Update fetch: {error}")
+        pause()
+        return
+
+    if fetch.returncode != 0:
+        console.print(Panel(
+            fetch.stderr.strip() or "No se pudo consultar el repositorio.",
+            title="[red]Error de conexión[/red]",
+            border_style="red",
+        ))
+        log(f"Update fetch stderr: {fetch.stderr}")
+        pause()
+        return
+
+    try:
+        local = subprocess.run(
+            ["git", "-C", str(app_dir), "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+
+        remote = subprocess.run(
+            ["git", "-C", str(app_dir), "rev-parse", f"origin/{REPO_BRANCH}"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+    except subprocess.CalledProcessError as error:
+        console.print(Panel(str(error), title="[red]Error Git[/red]", border_style="red"))
+        log(f"Update rev-parse: {error}")
+        pause()
+        return
+
+    if local == remote:
+        console.print(Panel(
+            f"[green]✓ Ya tienes la versión más reciente.[/green]\n\n"
+            f"[dim]Commit: {local[:10]}[/dim]\n"
+            f"[dim]Versión instalada: v{VERSION}[/dim]",
+            title="Sin actualizaciones",
+            border_style="green",
+        ))
+        pause()
+        return
+
+    # --------------------------------------------------------
+    # 2. Mostrar cambios
+    # --------------------------------------------------------
+    try:
+        log_diff = subprocess.run(
+            ["git", "-C", str(app_dir), "log", "--oneline", f"{local}..{remote}"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+    except subprocess.CalledProcessError:
+        log_diff = ""
+
+    console.print(Panel(
+        f"[yellow]Hay una nueva versión disponible.[/yellow]\n\n"
+        f"Local : [cyan]{local[:10]}[/cyan]\n"
+        f"Remoto: [cyan]{remote[:10]}[/cyan]\n\n"
+        + (f"[dim]Cambios:[/dim]\n{log_diff}" if log_diff else ""),
+        title="Actualización disponible",
+        border_style="yellow",
+    ))
+
+    if not Confirm.ask("¿Actualizar ahora?", default=True):
+        return
+
+    # --------------------------------------------------------
+    # 3. Pull
+    # --------------------------------------------------------
+    try:
+        with console.status("[cyan]Actualizando...[/cyan]", spinner="dots"):
+            pull = subprocess.run(
+                ["git", "-C", str(app_dir), "pull", "--ff-only"],
+                capture_output=True, text=True, check=False,
+            )
+    except Exception as error:
+        console.print(Panel(str(error), title="[red]Error[/red]", border_style="red"))
+        log(f"Update pull: {error}")
+        pause()
+        return
+
+    if pull.returncode != 0:
+        console.print(Panel(
+            pull.stderr.strip() or "No se pudo actualizar.",
+            title="[red]Error al actualizar[/red]",
+            border_style="red",
+        ))
+        log(f"Update pull stderr: {pull.stderr}")
+        pause()
+        return
+
+    # --------------------------------------------------------
+    # 4. Reinstalar dependencias si requirements.txt cambió
+    # --------------------------------------------------------
+    req = app_dir / "requirements.txt"
+    if req.is_file():
+        console.print("[cyan]Actualizando dependencias Python...[/cyan]")
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-r", str(req)],
+            check=False,
+        )
+        if result.returncode == 0:
+            console.print("[green]✓ Dependencias actualizadas.[/green]")
+        else:
+            console.print("[yellow]⚠ Las dependencias no se actualizaron.[/yellow]")
+
+    console.print(Panel(
+        "[bold green]✓ TYDL actualizado correctamente.[/bold green]\n\n"
+        "[dim]Cierra y vuelve a abrir TYDL para usar la nueva versión.[/dim]",
+        border_style="green",
+    ))
+    pause()
 
 
 # ============================================================
@@ -1694,6 +1868,32 @@ def show_history():
 # CONFIGURACIÓN
 # ============================================================
 
+def _ask_directory(prompt_text, current):
+    """Pide una ruta, la expande y la valida."""
+    new = Prompt.ask(prompt_text, default=current).strip()
+    new = os.path.expanduser(os.path.expandvars(new))
+    path = Path(new)
+
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except Exception as error:
+        console.print(f"[red]✗ Ruta inválida: {error}[/red]")
+        time.sleep(1.5)
+        return None
+
+    if not path.is_dir():
+        console.print("[red]✗ La ruta no es un directorio.[/red]")
+        time.sleep(1.5)
+        return None
+
+    if not os.access(path, os.W_OK):
+        console.print("[red]✗ Sin permisos de escritura en esa carpeta.[/red]")
+        time.sleep(1.5)
+        return None
+
+    return str(path)
+
+
 def settings():
 
     while True:
@@ -1706,186 +1906,76 @@ def settings():
             border_style="cyan",
         )
 
-        table.add_column(
-            "#"
-        )
+        table.add_column("#", justify="center", style="cyan")
+        table.add_column("Opción", style="yellow")
+        table.add_column("Valor", style="white")
 
-        table.add_column(
-            "Opción"
-        )
+        table.add_row("1", "Carpeta de descargas", CONFIG["download_dir"])
+        table.add_row("2", "Carpeta Spotify",      CONFIG["spotify_dir"])
+        table.add_row("3", "Calidad MP3",          f'{CONFIG["audio_quality"]} kbps')
+        table.add_row("4", "Sobrescribir",         str(CONFIG["overwrite"]))
+        table.add_row("5", "No playlist",          str(CONFIG["no_playlist"]))
+        table.add_row("6", "Historial",            str(CONFIG["history"]))
+        table.add_row("7", "Restaurar por defecto", "—")
+        table.add_row("X", "Salir",                 "")
 
-        table.add_column(
-            "Valor"
-        )
+        console.print(table)
 
-        table.add_row(
-            "1",
-            "Carpeta de descargas",
-            CONFIG[
-                "download_dir"
-            ],
-        )
-
-        table.add_row(
-            "2",
-            "Carpeta Spotify",
-            CONFIG[
-                "spotify_dir"
-            ],
-        )
-
-        table.add_row(
-            "3",
-            "Calidad MP3",
-            CONFIG[
-                "audio_quality"
-            ] + " kbps",
-        )
-
-        table.add_row(
-            "4",
-            "Sobrescribir",
-            str(
-                CONFIG[
-                    "overwrite"
-                ]
-            ),
-        )
-
-        table.add_row(
-            "5",
-            "No playlist",
-            str(
-                CONFIG[
-                    "no_playlist"
-                ]
-            ),
-        )
-
-        table.add_row(
-            "6",
-            "Historial",
-            str(
-                CONFIG[
-                    "history"
-                ]
-            ),
-        )
-
-        table.add_row(
-            "X",
-            "Salir",
-            "",
-        )
-
-        console.print(
-            table
-        )
-
-        option = Prompt.ask(
-            "TYDL ›"
-        ).lower()
+        option = Prompt.ask("TYDL ›").strip().lower()
 
         if option == "x":
-
             return
 
         elif option == "1":
-
-            CONFIG[
-                "download_dir"
-            ] = os.path.expanduser(
-                Prompt.ask(
-                    "Nueva carpeta",
-                    default=CONFIG[
-                        "download_dir"
-                    ],
-                )
+            new = _ask_directory(
+                "Nueva carpeta de descargas",
+                CONFIG["download_dir"],
             )
-
-            save_config(
-                CONFIG
-            )
+            if new:
+                CONFIG["download_dir"] = new
+                save_config(CONFIG)
+                console.print("[green]✓ Guardado.[/green]")
+                time.sleep(0.8)
 
         elif option == "2":
-
-            CONFIG[
-                "spotify_dir"
-            ] = os.path.expanduser(
-                Prompt.ask(
-                    "Nueva carpeta",
-                    default=CONFIG[
-                        "spotify_dir"
-                    ],
-                )
+            new = _ask_directory(
+                "Nueva carpeta Spotify",
+                CONFIG["spotify_dir"],
             )
-
-            save_config(
-                CONFIG
-            )
+            if new:
+                CONFIG["spotify_dir"] = new
+                save_config(CONFIG)
+                console.print("[green]✓ Guardado.[/green]")
+                time.sleep(0.8)
 
         elif option == "3":
-
             quality = Prompt.ask(
                 "Calidad MP3",
-                default=CONFIG[
-                    "audio_quality"
-                ],
+                default=CONFIG["audio_quality"],
+                choices=["64", "96", "128", "160", "192", "256", "320"],
             )
-
-            if quality in {
-                "64",
-                "96",
-                "128",
-                "160",
-                "192",
-                "256",
-                "320",
-            }:
-
-                CONFIG[
-                    "audio_quality"
-                ] = quality
-
-                save_config(
-                    CONFIG
-                )
+            CONFIG["audio_quality"] = quality
+            save_config(CONFIG)
 
         elif option == "4":
-
-            CONFIG[
-                "overwrite"
-            ] = not CONFIG[
-                "overwrite"
-            ]
-
-            save_config(
-                CONFIG
-            )
+            CONFIG["overwrite"] = not CONFIG["overwrite"]
+            save_config(CONFIG)
 
         elif option == "5":
-
-            CONFIG[
-                "no_playlist"
-            ] = not CONFIG[
-                "no_playlist"
-            ]
-
-            save_config(
-                CONFIG
-            )
+            CONFIG["no_playlist"] = not CONFIG["no_playlist"]
+            save_config(CONFIG)
 
         elif option == "6":
+            CONFIG["history"] = not CONFIG["history"]
+            save_config(CONFIG)
 
-            CONFIG[
-                "history"
-            ] = not CONFIG[
-                "history"
-            ]
-
-            save_config(
-                CONFIG
-            )
+        elif option == "7":
+            if Confirm.ask("¿Restaurar la configuración por defecto?", default=False):
+                CONFIG.clear()
+                CONFIG.update(DEFAULT_CONFIG.copy())
+                save_config(CONFIG)
+                console.print("[green]✓ Configuración restaurada.[/green]")
+                time.sleep(0.8)
 
 
 # ============================================================
@@ -1904,67 +1994,31 @@ def admin_menu():
             border_style="cyan",
         )
 
-        table.add_column(
-            "#",
-            style="cyan",
-        )
+        table.add_column("#", style="cyan")
+        table.add_column("Función", style="yellow")
 
-        table.add_column(
-            "Función",
-            style="yellow",
-        )
+        table.add_row("U", "⬆ Actualizar")
+        table.add_row("R", "🔧 Reparar")
+        table.add_row("A", "ℹ Acerca de")
+        table.add_row("H", "📜 Historial")
+        table.add_row("C", "⚙ Configuración")
+        table.add_row("X", "🚪 Salir")
 
-        table.add_row(
-            "R",
-            "🔧 Reparar",
-        )
+        console.print(table)
 
-        table.add_row(
-            "A",
-            "ℹ Acerca de",
-        )
+        option = Prompt.ask("TYDL ›").strip().lower()
 
-        table.add_row(
-            "H",
-            "📜 Historial",
-        )
-
-        table.add_row(
-            "C",
-            "⚙ Configuración",
-        )
-
-        table.add_row(
-            "X",
-            "🚪 Salir",
-        )
-
-        console.print(
-            table
-        )
-
-        option = Prompt.ask(
-            "TYDL ›"
-        ).lower()
-
-        if option == "r":
-
+        if option == "u":
+            update_app()
+        elif option == "r":
             repair_ydl()
-
         elif option == "a":
-
             about()
-
         elif option == "h":
-
             show_history()
-
         elif option == "c":
-
             settings()
-
         elif option == "x":
-
             return
 
 
@@ -2000,6 +2054,11 @@ def parser():
     )
 
     p.add_argument(
+        "--update",
+        action="store_true",
+    )
+
+    p.add_argument(
         "--about",
         action="store_true",
     )
@@ -2029,28 +2088,24 @@ def main():
     # FUNCIONES DIRECTAS
     # --------------------------------------------------------
 
+    if args.update:
+        update_app()
+        return
+
     if args.repair:
-
         repair_ydl()
-
         return
 
     if args.about:
-
         about()
-
         return
 
     if args.history:
-
         show_history()
-
         return
 
     if args.config:
-
         settings()
-
         return
 
     # --------------------------------------------------------
