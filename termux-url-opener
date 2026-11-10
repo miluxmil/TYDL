@@ -1,0 +1,431 @@
+#!/data/data/com.termux/files/usr/bin/bash
+#
+# termux-url-opener
+# Proyecto: TYDL
+# Autor: miluxmil
+# Repositorio: https://github.com/miluxmil/TYDL
+#
+
+set -euo pipefail
+
+# ==========================================================
+# CONFIGURACION
+# ==========================================================
+
+REPO_OWNER="miluxmil"
+REPO_NAME="TYDL"
+REPO_BRANCH="main"
+
+REPO_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}.git"
+REPO_RAW="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REPO_BRANCH}"
+
+BOOTSTRAP_VERSION="0.1.1"
+
+BOOTSTRAP_PATH="$HOME/bin/termux-url-opener"
+
+MILUX_DIR="$HOME/.milux"
+YDL_DIR="$MILUX_DIR/ydl"
+YDL_MAIN="$YDL_DIR/main.py"
+
+VENV_ROOT="$MILUX_DIR/venvs"
+YDL_VENV="$VENV_ROOT/tydl"
+
+REQUIRED_PKGS=(python git curl ffmpeg)
+
+
+# ==========================================================
+# MENSAJES
+# ==========================================================
+
+msg_info() {
+    printf '\033[1;34m[INFO]\033[0m  %s\n' "$*"
+}
+
+msg_ok() {
+    printf '\033[1;32m[OK]\033[0m    %s\n' "$*"
+}
+
+msg_warn() {
+    printf '\033[1;33m[AVISO]\033[0m %s\n' "$*"
+}
+
+msg_err() {
+    printf '\033[1;31m[ERROR]\033[0m %s\n' "$*" >&2
+}
+
+
+# ==========================================================
+# UTILIDADES
+# ==========================================================
+
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+
+# ==========================================================
+# COMPROBACION DE DEPENDENCIAS
+# ==========================================================
+
+check_requirements() {
+
+    local missing=()
+    local pkg
+
+    for pkg in "${REQUIRED_PKGS[@]}"; do
+        if ! command_exists "$pkg"; then
+            missing+=("$pkg")
+        fi
+    done
+
+    if ((${#missing[@]} == 0)); then
+        msg_ok "Todas las herramientas están disponibles."
+        return 0
+    fi
+
+    msg_warn "Faltan herramientas: ${missing[*]}"
+    msg_info "Se instalarán automáticamente mediante Termux."
+
+    if ! command_exists pkg; then
+        msg_err "No se encontró el administrador de paquetes pkg."
+        return 1
+    fi
+
+    if ! pkg update -y; then
+        msg_err "No se pudieron actualizar los repositorios."
+        return 1
+    fi
+
+    if ! pkg install -y "${missing[@]}"; then
+        msg_err "No se pudieron instalar todas las dependencias."
+        return 1
+    fi
+
+    for pkg in "${missing[@]}"; do
+        if ! command_exists "$pkg"; then
+            msg_err "La herramienta $pkg sigue sin estar disponible."
+            return 1
+        fi
+    done
+
+    msg_ok "Dependencias instaladas correctamente."
+}
+
+
+# ==========================================================
+# INSTALACION INICIAL DE LA APLICACION
+# ==========================================================
+
+clone_app() {
+
+    local temp_dir="$MILUX_DIR/.ydl-install.$$"
+
+    mkdir -p "$MILUX_DIR"
+
+    if [[ -e "$temp_dir" ]]; then
+        msg_err "Existe un directorio temporal de instalación."
+        return 1
+    fi
+
+    msg_info "Descargando tydl desde GitHub..."
+
+    if ! git clone --depth 1 \
+        --branch "$REPO_BRANCH" \
+        "$REPO_URL" "$temp_dir"; then
+
+        rm -rf "$temp_dir"
+        msg_err "No se pudo descargar el repositorio."
+        return 1
+    fi
+
+    if [[ ! -f "$temp_dir/main.py" ]]; then
+        rm -rf "$temp_dir"
+        msg_err "El repositorio no contiene main.py."
+        return 1
+    fi
+
+    if ! mv "$temp_dir" "$YDL_DIR"; then
+        rm -rf "$temp_dir"
+        msg_err "No se pudo instalar la aplicación."
+        return 1
+    fi
+
+    msg_ok "tydl instalado correctamente."
+}
+
+
+ensure_app() {
+
+    local backup_dir
+    local suffix=1
+
+    if [[ -d "$YDL_DIR/.git" ]]; then
+
+        if [[ ! -f "$YDL_MAIN" ]]; then
+            msg_err "La instalación no contiene main.py."
+            return 1
+        fi
+
+        return 0
+    fi
+
+    if [[ -e "$YDL_DIR" ]]; then
+
+        # Conservar cualquier carpeta previa que no sea un clon Git.
+        # Esto permite recuperar instalaciones antiguas o incompletas
+        # sin sobrescribir archivos del usuario.
+        backup_dir="${YDL_DIR}.backup.$(date +%Y%m%d-%H%M%S)"
+
+        while [[ -e "$backup_dir" ]]; do
+            backup_dir="${YDL_DIR}.backup.$(date +%Y%m%d-%H%M%S).${suffix}"
+            ((suffix += 1))
+        done
+
+        msg_warn "El directorio existente no es un repositorio Git."
+        msg_info "Se conservará una copia en: $backup_dir"
+
+        if ! mv "$YDL_DIR" "$backup_dir"; then
+            msg_err "No se pudo respaldar el directorio existente."
+            return 1
+        fi
+
+        if ! clone_app; then
+            msg_err "No se pudo instalar tydl; se intentará restaurar la carpeta anterior."
+
+            if [[ ! -e "$YDL_DIR" ]] && ! mv "$backup_dir" "$YDL_DIR"; then
+                msg_err "No se pudo restaurar la carpeta anterior: $backup_dir"
+            fi
+
+            return 1
+        fi
+
+        msg_ok "Instalación anterior conservada en: $backup_dir"
+        return 0
+    fi
+
+    clone_app
+}
+
+
+# ==========================================================
+# ACTUALIZACION DE LA APLICACION
+# ==========================================================
+
+update_app() {
+
+    if [[ ! -d "$YDL_DIR/.git" ]]; then
+
+        if [[ -e "$YDL_DIR" ]]; then
+            msg_err "El directorio existente no es un repositorio Git."
+            return 1
+        fi
+
+        clone_app
+        return
+    fi
+
+    msg_info "Comprobando actualizaciones de tydl..."
+
+    if ! git -C "$YDL_DIR" pull --ff-only; then
+        msg_err "No se pudo actualizar tydl."
+        msg_warn "Se conservará la versión local."
+        return 1
+    fi
+
+    if [[ ! -f "$YDL_MAIN" ]]; then
+        msg_err "No se encontró main.py después de actualizar."
+        return 1
+    fi
+
+    msg_ok "Aplicación actualizada correctamente."
+}
+
+
+# ==========================================================
+# ENTORNO VIRTUAL PYTHON
+# ==========================================================
+
+setup_python_env() {
+
+    mkdir -p "$(dirname "$YDL_VENV")"
+
+    # Crear entorno virtual si no existe
+    if [[ ! -x "$YDL_VENV/bin/python" ]]; then
+
+        msg_info "Creando entorno virtual..."
+
+        python -m venv "$YDL_VENV"
+
+    fi
+
+    # Comprobar requirements.txt
+    if [[ ! -f "$YDL_DIR/requirements.txt" ]]; then
+        msg_err "No se encontró requirements.txt"
+        exit 1
+    fi
+
+    # Instalar o actualizar dependencias
+    msg_info "Instalando dependencias Python..."
+
+    "$YDL_VENV/bin/python" -m pip install \
+        -r "$YDL_DIR/requirements.txt"
+
+    msg_ok "Dependencias Python listas."
+}
+
+# ==========================================================
+# ACTUALIZACION DEL BOOTSTRAP
+# ==========================================================
+
+update_bootstrap() {
+
+    local temp_file="${BOOTSTRAP_PATH}.tmp.$$"
+
+    mkdir -p "$HOME/bin"
+
+    msg_info "Descargando actualización del bootstrap..."
+
+    if ! curl -fsSL \
+        "${REPO_RAW}/termux-url-opener" \
+        -o "$temp_file"; then
+
+        rm -f "$temp_file"
+        msg_err "No se pudo descargar el bootstrap."
+        return 1
+    fi
+
+    if [[ "$(head -n 1 "$temp_file")" != "#!/data/data/com.termux/files/usr/bin/bash" ]]; then
+
+        rm -f "$temp_file"
+        msg_err "El bootstrap descargado no tiene el shebang correcto en la primera línea."
+        return 1
+    fi
+
+    if ! bash -n "$temp_file"; then
+
+        rm -f "$temp_file"
+        msg_err "El bootstrap descargado contiene errores de sintaxis."
+        return 1
+    fi
+
+    chmod 700 "$temp_file"
+
+    if ! mv -f "$temp_file" "$BOOTSTRAP_PATH"; then
+        rm -f "$temp_file"
+        msg_err "No se pudo reemplazar el bootstrap."
+        return 1
+    fi
+
+    msg_ok "Bootstrap actualizado correctamente."
+}
+
+
+# ==========================================================
+# ACTUALIZACION GENERAL
+# ==========================================================
+
+run_update() {
+
+    msg_info "Iniciando actualización de tydl..."
+
+    if ! update_bootstrap; then
+        msg_warn "El bootstrap no pudo actualizarse."
+    fi
+
+    if ! update_app; then
+        return 1
+    fi
+
+    if ! setup_python_env 1; then
+        return 1
+    fi
+
+    msg_ok "Proceso de actualización finalizado."
+}
+
+
+# ==========================================================
+# VERSION Y AYUDA
+# ==========================================================
+
+show_version() {
+
+    echo "Bootstrap: $BOOTSTRAP_VERSION"
+
+    if [[ -f "$YDL_DIR/VERSION" ]]; then
+        printf "Aplicación: "
+        cat "$YDL_DIR/VERSION"
+    else
+        echo "Aplicación: no instalada"
+    fi
+}
+
+
+show_help() {
+
+    cat <<'EOF'
+tydl - Termux URL Opener
+
+Uso:
+  termux-url-opener <URL>
+  termux-url-opener --update
+  termux-url-opener --version
+  termux-url-opener --help
+
+Opciones:
+  --update    Actualiza bootstrap y aplicación.
+  --version   Muestra las versiones instaladas.
+  --help      Muestra esta ayuda.
+EOF
+}
+
+
+# ==========================================================
+# PUNTO DE ENTRADA
+# ==========================================================
+
+main() {
+
+    local URL="${1:-}"
+
+    case "$URL" in
+
+        --help|-h)
+            show_help
+            ;;
+
+        --version)
+            show_version
+            ;;
+
+        --update)
+            check_requirements || exit 1
+            run_update || exit 1
+            ;;
+
+        "")
+            msg_err "No se recibió ninguna URL."
+            show_help
+            exit 1
+            ;;
+
+        *)
+            check_requirements || exit 1
+
+            msg_info "Verificando instalación de tydl..."
+
+            ensure_app || exit 1
+
+            setup_python_env 0 || exit 1
+
+            msg_ok "Ejecutando tydl..."
+
+            exec "$YDL_VENV/bin/python" "$YDL_MAIN" "$URL"
+            ;;
+
+    esac
+}
+
+
+main "$@"
+
